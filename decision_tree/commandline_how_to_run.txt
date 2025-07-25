@@ -1,0 +1,7 @@
+
+#from test directory, run
+python3 test_sketches.py 
+
+#from decision tree directory, run
+python3 generate_bitvector_csvfile_from_raw_data.py DU_raw.csv output.csv --target "tripOutcome=bad,tripOutcome=good"
+
