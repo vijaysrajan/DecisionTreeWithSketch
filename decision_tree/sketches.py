@@ -14,7 +14,7 @@ class DataSketch(ABC):
     Abstract base class for data sketches used in decision tree construction.
     
     A DataSketch represents a set of row IDs from the training data and provides
-    efficient set operations (intersection, union) and serialization capabilities.
+    efficient set operations (intersection, union, subtraction) and serialization capabilities.
     Used to track which data points satisfy specific feature conditions or 
     target class values.
     """
@@ -50,6 +50,24 @@ class DataSketch(ABC):
             
         Raises:
             TypeError: If other is not a DataSketch of the same type
+        """
+        pass
+    
+    @abstractmethod
+    def subtract(self, other: 'DataSketch') -> 'DataSketch':
+        """
+        Returns a new DataSketch containing row IDs that are in this sketch
+        but not in the other sketch (set difference: self - other).
+        
+        Args:
+            other (DataSketch): DataSketch to subtract from this one
+            
+        Returns:
+            DataSketch: New sketch containing row IDs in self but not in other
+            
+        Raises:
+            TypeError: If other is not a DataSketch of the same type
+            NotImplementedError: If sketch type doesn't support subtraction
         """
         pass
     
@@ -299,6 +317,35 @@ class BitVector(DataSketch):
         else:
             raise ValueError("Cannot union BitVector implementations of different types")
     
+    def subtract(self, other: 'BitVector') -> 'BitVector':
+        """
+        Returns BitVector with row IDs in this sketch but not in other.
+        
+        Args:
+            other (BitVector): BitVector to subtract
+            
+        Returns:
+            BitVector: New BitVector with set difference
+        """
+        if not isinstance(other, BitVector):
+            raise TypeError(f"Cannot subtract {type(other)} from BitVector")
+        
+        if self._use_bitarray and other._use_bitarray:
+            if self.universe_size != other.universe_size:
+                raise ValueError("Cannot subtract BitVectors with different universe sizes")
+            
+            result = BitVector(universe_size=self.universe_size)
+            # Bitwise subtraction: self AND (NOT other)
+            result.bits = self.bits & (~other.bits)
+            return result
+            
+        elif not self._use_bitarray and not other._use_bitarray:
+            # Set subtraction
+            result_ids = self.row_ids - other.row_ids
+            return BitVector(result_ids, self.universe_size)
+        else:
+            raise ValueError("Cannot subtract BitVector implementations of different types")
+    
     def get_count(self) -> int:
         """
         Returns the number of set bits (row IDs).
@@ -457,15 +504,3 @@ class BitVector(DataSketch):
 
 # Register BitVector with the factory
 SketchFactory.register_sketch_type('bitvector', BitVector)
-
-
-
-
-#class ThetaSketch(DataSketch):
-#    def __init__(self, row_ids=None)
-#    def intersect(self, other)
-#    def get_count()
-#    def from_base64(encoded_string)
-#    def to_base64()
-
-
