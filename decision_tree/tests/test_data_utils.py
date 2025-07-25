@@ -3,9 +3,19 @@ import os
 import tempfile
 import csv
 
-# Import the classes we're testing  
-# from sketches import DataSketch, SketchFactory
-# from data_utils import parse_csv_input, validate_sketches
+# Import the classes we're testing
+import sys
+import os
+# Add parent directory to path so we can import sketches module
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+try:
+    from sketches import DataSketch, SketchFactory
+    from data_utils import parse_csv_input, validate_sketches
+except ImportError:
+    # If sketches.py is in same directory as test file
+    from sketches import DataSketch, SketchFactory
+    from data_utils import parse_csv_input, validate_sketches
 
 
 def create_sample_csv(output_path: str, universe_size: int = 10, sketch_type: str = 'bitvector'):
