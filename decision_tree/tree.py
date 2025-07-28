@@ -75,7 +75,7 @@ class DecisionTreeClassifier:
         Raises:
             ValueError: If targets don't have exactly y=0 and y=1
         """
-        print(f"Training Decision Tree with {self.criterion} criterion...")
+        print(f"Training Decision Tree with {self.criterion} criterion (min_samples_leaf={self.min_samples_leaf})...")
         start_time = time.time()
         
         # Validate inputs
@@ -165,9 +165,10 @@ class DecisionTreeClassifier:
             remaining_features, current_y0_sketch, current_y1_sketch
         )
         
-        if best_gain <= 0:
-            # No gain from splitting, create leaf
-            print(f"{'  ' * depth}No positive gain, creating leaf")
+        # Check if no valid splits were found
+        if best_feature is None or best_gain <= 0:
+            # No valid splits found, create leaf
+            print(f"{'  ' * depth}No valid splits found (best_gain={best_gain}), creating leaf")
             leaf = TreeNode(
                 is_leaf=True,
                 class_distribution=class_dist,
@@ -228,9 +229,9 @@ class DecisionTreeClassifier:
     def _find_best_split(self, 
                         remaining_features: Dict[str, DataSketch],
                         current_y0_sketch: DataSketch,
-                        current_y1_sketch: DataSketch) -> Tuple[str, float]:
+                        current_y1_sketch: DataSketch) -> Tuple[Optional[str], float]:
         """
-        Find the best feature to split on.
+        Find the best feature to split on that satisfies min_samples_leaf constraint.
         
         Args:
             remaining_features (Dict[str, DataSketch]): Available features
@@ -238,14 +239,16 @@ class DecisionTreeClassifier:
             current_y1_sketch (DataSketch): Current class 1 instances
             
         Returns:
-            Tuple[str, float]: (best_feature_name, best_information_gain)
+            Tuple[Optional[str], float]: (best_feature_name, best_information_gain)
+                Returns (None, 0.0) if no valid splits found
         """
         if not remaining_features:
             return None, 0.0
         
-        # Use ImpurityCalculator to find best split
+        # Use ImpurityCalculator to find best split that respects min_samples_leaf
         best_feature, best_gain = ImpurityCalculator.find_best_split(
-            remaining_features, current_y0_sketch, current_y1_sketch, self.impurity_method
+            remaining_features, current_y0_sketch, current_y1_sketch, 
+            self.impurity_method, self.min_samples_leaf
         )
         
         return best_feature, best_gain
@@ -269,14 +272,17 @@ class DecisionTreeClassifier:
         """
         # Check max depth
         if self.max_depth is not None and depth >= self.max_depth:
+            print(f"{'  ' * depth}Stopping: max depth {self.max_depth} reached")
             return True
         
         # Check if node is pure (only one class)
         if current_y0_sketch.get_count() == 0 or current_y1_sketch.get_count() == 0:
+            print(f"{'  ' * depth}Stopping: node is pure")
             return True
         
         # Check if no features remaining
         if not remaining_features:
+            print(f"{'  ' * depth}Stopping: no features remaining")
             return True
         
         # Check minimum samples per leaf
@@ -285,10 +291,12 @@ class DecisionTreeClassifier:
         # If current node has fewer than 2 * min_samples_leaf samples,
         # any split will violate the min_samples_leaf constraint
         if total_samples < 2 * self.min_samples_leaf:
+            print(f"{'  ' * depth}Stopping: not enough samples ({total_samples} < {2 * self.min_samples_leaf})")
             return True
         
         # Additional check: look at actual proposed splits to see if they would violate min_samples_leaf
         if self.min_samples_leaf > 1:  # Only do this check if min_samples_leaf is meaningful
+            valid_splits_found = False
             for feature_name, feature_sketch in remaining_features.items():
                 left_y0, left_y1, right_y0, right_y1 = ImpurityCalculator.calculate_feature_split_counts(
                     feature_sketch, current_y0_sketch, current_y1_sketch
@@ -298,10 +306,12 @@ class DecisionTreeClassifier:
                 
                 # If this feature creates a valid split (both children >= min_samples_leaf), we can continue
                 if left_total >= self.min_samples_leaf and right_total >= self.min_samples_leaf:
-                    return False  # Found at least one valid split, don't stop
+                    valid_splits_found = True
+                    break  # Found at least one valid split, don't stop
             
-            # No valid splits found - all would violate min_samples_leaf
-            return True
+            if not valid_splits_found:
+                print(f"{'  ' * depth}Stopping: no valid splits (all violate min_samples_leaf={self.min_samples_leaf})")
+                return True
         
         return False
     
@@ -384,7 +394,7 @@ class DecisionTreeClassifier:
             print("Tree not trained.")
             return
         
-        print(f"\nDecision Tree (criterion={self.criterion}, max_depth={self.max_depth}):")
+        print(f"\nDecision Tree (criterion={self.criterion}, max_depth={self.max_depth}, min_samples_leaf={self.min_samples_leaf}):")
         print(f"Training samples: {self.n_samples}, Features: {self.n_features}")
         print(f"Nodes: {self.node_count}, Leaves: {self.leaf_count}, Max depth: {self.max_tree_depth}")
         print("-" * 80)
@@ -455,4 +465,4 @@ class DecisionTreeClassifier:
         return count
     
     def __str__(self) -> str:
-        return f"DecisionTreeClassifier(criterion={self.criterion}, max_depth={self.max_depth}, trained={self.root is not None})"
+        return f"DecisionTreeClassifier(criterion={self.criterion}, max_depth={self.max_depth}, min_samples_leaf={self.min_samples_leaf}, trained={self.root is not None})"
