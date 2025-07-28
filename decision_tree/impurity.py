@@ -223,25 +223,50 @@ class ImpurityCalculator:
         return information_gain
     
     @staticmethod
+    def is_valid_split(left_y0_count: int, left_y1_count: int,
+                      right_y0_count: int, right_y1_count: int,
+                      min_samples_leaf: int) -> bool:
+        """
+        Check if a split satisfies the minimum samples per leaf constraint.
+        
+        Args:
+            left_y0_count (int): Left child class 0 count
+            left_y1_count (int): Left child class 1 count
+            right_y0_count (int): Right child class 0 count
+            right_y1_count (int): Right child class 1 count
+            min_samples_leaf (int): Minimum samples required per leaf
+            
+        Returns:
+            bool: True if split is valid, False otherwise
+        """
+        left_total = left_y0_count + left_y1_count
+        right_total = right_y0_count + right_y1_count
+        
+        return left_total >= min_samples_leaf and right_total >= min_samples_leaf
+    
+    @staticmethod
     def evaluate_all_features(features: Dict[str, 'DataSketch'],
                             y0_sketch: 'DataSketch', 
                             y1_sketch: 'DataSketch',
-                            method: ImpurityMethod = ImpurityMethod.ENTROPY) -> Dict[str, float]:
+                            method: ImpurityMethod = ImpurityMethod.ENTROPY,
+                            min_samples_leaf: int = 1) -> Dict[str, float]:
         """
-        Evaluate information gain for all features.
+        Evaluate information gain for all features, filtering out invalid splits.
         
         Args:
             features (Dict[str, DataSketch]): Feature sketches {"feature_name=value": sketch}
             y0_sketch (DataSketch): Target class 0 sketch
             y1_sketch (DataSketch): Target class 1 sketch  
             method (ImpurityMethod): Impurity calculation method
+            min_samples_leaf (int): Minimum samples required per leaf
             
         Returns:
             Dict[str, float]: Information gains {"feature_name=value": gain}
+                Only includes features that create valid splits.
         """
         gains = {}
         
-        print(f"Evaluating {len(features)} features using {method.value}...")
+        print(f"Evaluating {len(features)} features using {method.value} (min_samples_leaf={min_samples_leaf})...")
         
         for feature_name, feature_sketch in features.items():
             # Calculate split counts for this feature
@@ -249,7 +274,14 @@ class ImpurityCalculator:
                 feature_sketch, y0_sketch, y1_sketch
             )
             
-            # Calculate information gain
+            # Check if this split satisfies min_samples_leaf constraint
+            if not ImpurityCalculator.is_valid_split(left_y0, left_y1, right_y0, right_y1, min_samples_leaf):
+                print(f"  {feature_name}: INVALID split "
+                      f"(left: {left_y0}+{left_y1}={left_y0+left_y1}, "
+                      f"right: {right_y0}+{right_y1}={right_y0+right_y1}) < {min_samples_leaf}")
+                continue  # Skip this feature as it creates invalid split
+            
+            # Calculate information gain for valid split
             gain = ImpurityCalculator.calculate_information_gain(
                 y0_sketch, y1_sketch, 
                 left_y0, left_y1, right_y0, right_y1,
@@ -262,24 +294,30 @@ class ImpurityCalculator:
                   f"(left: {left_y0}+{left_y1}={left_y0+left_y1}, "
                   f"right: {right_y0}+{right_y1}={right_y0+right_y1})")
         
+        if not gains:
+            print("  No valid splits found that satisfy min_samples_leaf constraint!")
+        
         return gains
     
     @staticmethod
     def find_best_split(features: Dict[str, 'DataSketch'],
                        y0_sketch: 'DataSketch',
                        y1_sketch: 'DataSketch', 
-                       method: ImpurityMethod = ImpurityMethod.ENTROPY) -> Tuple[str, float]:
+                       method: ImpurityMethod = ImpurityMethod.ENTROPY,
+                       min_samples_leaf: int = 1) -> Tuple[str, float]:
         """
-        Find the feature with the highest information gain.
+        Find the feature with the highest information gain that creates a valid split.
         
         Args:
             features (Dict[str, DataSketch]): Feature sketches
             y0_sketch (DataSketch): Target class 0 sketch
             y1_sketch (DataSketch): Target class 1 sketch
             method (ImpurityMethod): Impurity calculation method
+            min_samples_leaf (int): Minimum samples required per leaf
             
         Returns:
             Tuple[str, float]: (best_feature_name, best_gain)
+                Returns (None, 0.0) if no valid splits found
             
         Raises:
             ValueError: If no features provided
@@ -287,13 +325,18 @@ class ImpurityCalculator:
         if not features:
             raise ValueError("No features provided for split evaluation")
         
-        gains = ImpurityCalculator.evaluate_all_features(features, y0_sketch, y1_sketch, method)
+        gains = ImpurityCalculator.evaluate_all_features(
+            features, y0_sketch, y1_sketch, method, min_samples_leaf
+        )
         
-        # Find feature with maximum gain
+        # Check if any valid splits were found
+        if not gains:
+            print("No valid splits found that satisfy constraints")
+            return None, 0.0
+        
+        # Find feature with maximum gain among valid splits
         best_feature = max(gains.items(), key=lambda x: x[1])
         
         print(f"Best split: {best_feature[0]} with gain {best_feature[1]:.4f}")
         
         return best_feature
-
-
