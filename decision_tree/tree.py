@@ -1,5 +1,6 @@
 from typing import Dict, List, Tuple, Optional, Any
 import time
+import numpy as np
 
 # Import our components
 from sketches import DataSketch, SketchFactory
@@ -21,7 +22,8 @@ class DecisionTreeClassifier:
                  criterion: str = 'entropy',
                  sketch_type: str = 'bitvector',
                  store_node_sketches: bool = False,
-                 random_state: Optional[int] = None):
+                 random_state: Optional[int] = None,
+                 prediction_threshold: float = 0.5):
         """
         Initialize the Decision Tree Classifier.
         
@@ -32,6 +34,7 @@ class DecisionTreeClassifier:
             sketch_type (str): Type of sketch to use ('bitvector' or 'thetasketch')
             store_node_sketches (bool): Whether to store data sketches in nodes (for analysis)
             random_state (int, optional): Random seed for reproducibility
+            prediction_threshold (float): Threshold for predicting class 1 (default: 0.5)
         """
         self.max_depth = max_depth
         self.min_samples_leaf = min_samples_leaf
@@ -39,6 +42,7 @@ class DecisionTreeClassifier:
         self.sketch_type = sketch_type
         self.store_node_sketches = store_node_sketches
         self.random_state = random_state
+        self.prediction_threshold = prediction_threshold
         
         # Convert criterion string to enum
         if criterion.lower() == 'entropy':
@@ -157,7 +161,7 @@ class DecisionTreeClassifier:
                 current_y0_sketch, current_y1_sketch, self.impurity_method
             )
             
-            print(f"{'  ' * depth}Created leaf: pred={class_dist.predicted_class}, impurity={leaf.impurity:.4f}")
+            print(f"{'  ' * depth}Created leaf: P(y=1)={class_dist.y1_probability:.3f}, impurity={leaf.impurity:.4f}")
             return leaf
         
         # Find best split
@@ -348,12 +352,14 @@ class DecisionTreeClassifier:
         
         return left_y0, left_y1, right_y0, right_y1
     
-    def predict(self, samples: List[Dict[str, Any]]) -> List[int]:
+    def predict(self, samples: List[Dict[str, Any]], threshold: Optional[float] = None) -> List[int]:
         """
         Predict classes for samples.
         
         Args:
             samples (List[Dict[str, Any]]): List of samples to predict
+            threshold (float, optional): Threshold for predicting class 1. 
+                                       If None, uses self.prediction_threshold
             
         Returns:
             List[int]: Predicted classes
@@ -361,9 +367,12 @@ class DecisionTreeClassifier:
         if self.root is None:
             raise ValueError("Tree not trained. Call fit() first.")
         
+        if threshold is None:
+            threshold = self.prediction_threshold
+        
         predictions = []
         for sample in samples:
-            pred = self.root.predict_single(sample)
+            pred = self.root.predict_single(sample, threshold)
             predictions.append(pred)
         
         return predictions
@@ -388,17 +397,83 @@ class DecisionTreeClassifier:
         
         return probabilities
     
-    def print_tree(self) -> None:
-        """Print a visual representation of the decision tree."""
+    def compute_roc_auc(self, test_samples: List[Dict[str, Any]], true_labels: List[int]) -> Tuple[List[float], List[float], List[float], float]:
+        """
+        Compute ROC curve and AUC score.
+        
+        Args:
+            test_samples (List[Dict[str, Any]]): Test samples
+            true_labels (List[int]): True labels (0 or 1)
+            
+        Returns:
+            Tuple containing:
+                - fpr (List[float]): False positive rates
+                - tpr (List[float]): True positive rates  
+                - thresholds (List[float]): Thresholds used
+                - auc (float): Area under the ROC curve
+        """
+        if self.root is None:
+            raise ValueError("Tree not trained. Call fit() first.")
+        
+        # Get predicted probabilities for class 1
+        probas = self.predict_proba(test_samples)
+        y_scores = [p[1] for p in probas]  # P(y=1)
+        
+        # Convert to numpy arrays for easier computation
+        y_true = np.array(true_labels)
+        y_scores = np.array(y_scores)
+        
+        # Get unique thresholds from predicted probabilities
+        thresholds = sorted(set(y_scores), reverse=True)
+        thresholds.append(0.0)  # Add 0 to ensure we get (1, 1) point
+        
+        fpr_list = []
+        tpr_list = []
+        
+        for threshold in thresholds:
+            # Predict at this threshold
+            y_pred = (y_scores >= threshold).astype(int)
+            
+            # Calculate confusion matrix elements
+            tp = np.sum((y_true == 1) & (y_pred == 1))
+            fp = np.sum((y_true == 0) & (y_pred == 1))
+            tn = np.sum((y_true == 0) & (y_pred == 0))
+            fn = np.sum((y_true == 1) & (y_pred == 0))
+            
+            # Calculate rates
+            tpr = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+            fpr = fp / (fp + tn) if (fp + tn) > 0 else 0.0
+            
+            fpr_list.append(fpr)
+            tpr_list.append(tpr)
+        
+        # Calculate AUC using trapezoidal rule
+        auc = 0.0
+        for i in range(1, len(fpr_list)):
+            auc += (fpr_list[i] - fpr_list[i-1]) * (tpr_list[i] + tpr_list[i-1]) / 2.0
+        
+        return fpr_list, tpr_list, thresholds, auc
+    
+    def print_tree(self, threshold: Optional[float] = None) -> None:
+        """
+        Print a visual representation of the decision tree.
+        
+        Args:
+            threshold (float, optional): Threshold for showing predicted classes.
+                                       If None, uses self.prediction_threshold
+        """
         if self.root is None:
             print("Tree not trained.")
             return
         
-        print(f"\nDecision Tree (criterion={self.criterion}, max_depth={self.max_depth}, min_samples_leaf={self.min_samples_leaf}):")
+        if threshold is None:
+            threshold = self.prediction_threshold
+        
+        print(f"\nDecision Tree (criterion={self.criterion}, max_depth={self.max_depth}, min_samples_leaf={self.min_samples_leaf}, threshold={threshold}):")
         print(f"Training samples: {self.n_samples}, Features: {self.n_features}")
         print(f"Nodes: {self.node_count}, Leaves: {self.leaf_count}, Max depth: {self.max_tree_depth}")
         print("-" * 80)
-        self.root.print_tree()
+        self.root.print_tree(threshold=threshold)
         print("-" * 80)
     
     def get_feature_importance(self) -> Dict[str, float]:
@@ -465,4 +540,4 @@ class DecisionTreeClassifier:
         return count
     
     def __str__(self) -> str:
-        return f"DecisionTreeClassifier(criterion={self.criterion}, max_depth={self.max_depth}, min_samples_leaf={self.min_samples_leaf}, trained={self.root is not None})"
+        return f"DecisionTreeClassifier(criterion={self.criterion}, max_depth={self.max_depth}, min_samples_leaf={self.min_samples_leaf}, threshold={self.prediction_threshold}, trained={self.root is not None})"

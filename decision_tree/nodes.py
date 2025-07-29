@@ -34,13 +34,21 @@ class ClassDistribution:
             return 0.0
         return self.y1_count / self.total_count
     
-    @property
-    def predicted_class(self) -> int:
-        """Predicted class based on majority vote."""
-        if self.y1_count > self.y0_count:
+    def predicted_class(self, threshold: float = 0.5) -> int:
+        """
+        Predicted class based on threshold.
+        
+        Args:
+            threshold (float): Threshold for predicting class 1 (default: 0.5)
+                             If P(y=1) >= threshold, predict class 1
+        
+        Returns:
+            int: Predicted class (0 or 1)
+        """
+        if self.y1_probability >= threshold:
             return 1
         else:
-            return 0  # Default to class 0 in case of ties
+            return 0
     
     @property
     def confidence(self) -> float:
@@ -50,7 +58,7 @@ class ClassDistribution:
         return max(self.y0_probability, self.y1_probability)
     
     def __str__(self) -> str:
-        return f"ClassDist(y0={self.y0_count}, y1={self.y1_count}, pred={self.predicted_class}, conf={self.confidence:.3f})"
+        return f"ClassDist(y0={self.y0_count}, y1={self.y1_count}, P(y=1)={self.y1_probability:.3f})"
 
 
 class TreeNode:
@@ -159,26 +167,27 @@ class TreeNode:
         self.right_child = None
         self.feature = None
     
-    def predict_single(self, sample: Dict[str, Any]) -> int:
+    def predict_single(self, sample: Dict[str, Any], threshold: float = 0.5) -> int:
         """
         Predict class for a single sample by traversing the tree.
         
         Args:
             sample (Dict[str, Any]): Sample features {"feature_name": value}
+            threshold (float): Threshold for predicting class 1
             
         Returns:
             int: Predicted class (0 or 1)
         """
         if self.is_leaf:
-            return self.class_distribution.predicted_class
+            return self.class_distribution.predicted_class(threshold)
         
         # Navigate based on feature value
         feature_present = self._check_feature_condition(sample)
         
         if feature_present:
-            return self.left_child.predict_single(sample)
+            return self.left_child.predict_single(sample, threshold)
         else:
-            return self.right_child.predict_single(sample)
+            return self.right_child.predict_single(sample, threshold)
     
     def predict_proba_single(self, sample: Dict[str, Any]) -> tuple[float, float]:
         """
@@ -249,18 +258,20 @@ class TreeNode:
         
         return max(left_depth, right_depth)
     
-    def print_tree(self, indent: int = 0, prefix: str = "Root: ") -> None:
+    def print_tree(self, indent: int = 0, prefix: str = "Root: ", threshold: float = 0.5) -> None:
         """
         Print a visual representation of the tree.
         
         Args:
             indent (int): Current indentation level
             prefix (str): Prefix for this node
+            threshold (float): Threshold for showing predicted class
         """
         indent_str = "  " * indent
         
         if self.is_leaf:
-            print(f"{indent_str}{prefix}LEAF: {self.class_distribution}")
+            pred_class = self.class_distribution.predicted_class(threshold)
+            print(f"{indent_str}{prefix}LEAF: {self.class_distribution} -> pred={pred_class}")
         else:
             gain_str = f"{self.split_gain:.4f}" if self.split_gain is not None else "0.0000"
             print(f"{indent_str}{prefix}{self.feature} "
@@ -268,10 +279,10 @@ class TreeNode:
                   f"samples={self.get_data_count()})")
             
             if self.left_child:
-                self.left_child.print_tree(indent + 1, "├─ True:  ")
+                self.left_child.print_tree(indent + 1, "├─ True:  ", threshold)
             
             if self.right_child:
-                self.right_child.print_tree(indent + 1, "└─ False: ")
+                self.right_child.print_tree(indent + 1, "└─ False: ", threshold)
     
     def __str__(self) -> str:
         """String representation of the node."""
