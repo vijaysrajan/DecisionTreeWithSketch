@@ -43,9 +43,9 @@ def train_and_predict():
     # Create and train tree with a specific prediction threshold
     tree = DecisionTreeClassifier(
         criterion='entropy',        # or 'gini'
-        max_depth=7,               # Adjust for your data
-        min_samples_leaf=50,       # Adjust for your data size
-        prediction_threshold=0.75   # Default threshold
+        max_depth=16,               # Adjust for your data
+        min_samples_leaf=18,       # Adjust for your data size
+        prediction_threshold=0.5   # Default threshold
     )
     
     tree.fit(features, targets)
