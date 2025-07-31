@@ -54,6 +54,16 @@ def train_and_predict():
     print("\n🌲 Tree structure with default threshold (0.5):")
     tree.print_tree()
     
+    # Print JSON representation of the tree
+    print("\n📋 JSON representation of the tree:")
+    tree_json = tree.to_json(threshold=0.5, indent=2)
+    print(tree_json)
+    
+    # Optionally save JSON to file
+    with open('decision_tree.json', 'w') as f:
+        f.write(tree_json)
+    print("\n💾 Tree JSON saved to 'decision_tree.json'")
+    
     # Make predictions on new trips with different thresholds
     new_trips = [
         {"source": "ios", "city": "Bangalore", "zone_popularity": "POPULARITY_INDEX_1", 
@@ -250,7 +260,10 @@ if __name__ == "__main__":
     print("\n3. To compute ROC-AUC on your test data:")
     print("   fpr, tpr, thresholds, auc = tree.compute_roc_auc(test_samples, true_labels)")
     
-    print("\n4. To find optimal threshold for your use case:")
+    print("\n4. To get JSON representation:")
+    print("   json_tree = tree.to_json(threshold=0.5, indent=2)")
+    
+    print("\n5. To find optimal threshold for your use case:")
     print("   - For balanced accuracy: Use Youden's J statistic")
     print("   - For high precision: Choose threshold with desired FPR")
     print("   - For high recall: Choose threshold with desired TPR")

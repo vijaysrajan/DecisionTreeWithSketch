@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """
-Test file for nodes.py - tests TreeNode and ClassDistribution with threshold support.
+Test file for nodes.py - tests TreeNode and ClassDistribution with threshold support and JSON functionality.
 """
 
 import unittest
 from typing import Dict, Any, Optional
 import sys
 import os
+import json
 
 # Add parent directory to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -86,6 +87,46 @@ class TestClassDistribution(unittest.TestCase):
         cd_empty = ClassDistribution(y0_count=0, y1_count=0)
         self.assertEqual(cd_empty.predicted_class(0.5), 0)  # Default to 0 when empty
     
+    def test_to_dict_json_serialization(self):
+        """Test to_dict method for JSON serialization."""
+        # Test normal distribution
+        cd = ClassDistribution(y0_count=75, y1_count=25)
+        result = cd.to_dict()
+        
+        expected = {
+            'y0_count': 75,
+            'y1_count': 25,
+            'total_count': 100,
+            'y0_probability': 0.75,
+            'y1_probability': 0.25,
+            'confidence': 0.75
+        }
+        
+        self.assertEqual(result, expected)
+        
+        # Test edge case - empty distribution
+        cd_empty = ClassDistribution(y0_count=0, y1_count=0)
+        result_empty = cd_empty.to_dict()
+        
+        expected_empty = {
+            'y0_count': 0,
+            'y1_count': 0,
+            'total_count': 0,
+            'y0_probability': 0.0,
+            'y1_probability': 0.0,
+            'confidence': 0.0
+        }
+        
+        self.assertEqual(result_empty, expected_empty)
+        
+        # Test that result is JSON serializable
+        json_str = json.dumps(result)
+        self.assertIsInstance(json_str, str)
+        
+        # Test that we can deserialize it back
+        parsed = json.loads(json_str)
+        self.assertEqual(parsed, expected)
+    
     def test_string_representation(self):
         """Test string representation includes probability."""
         cd = ClassDistribution(y0_count=75, y1_count=25)
@@ -153,6 +194,147 @@ class TestTreeNode(unittest.TestCase):
         proba = leaf.predict_proba_single(sample)
         self.assertAlmostEqual(proba[0], 0.6)
         self.assertAlmostEqual(proba[1], 0.4)
+    
+    def test_leaf_node_to_json(self):
+        """Test leaf node JSON serialization."""
+        class_dist = ClassDistribution(y0_count=60, y1_count=40)
+        leaf = TreeNode(
+            is_leaf=True,
+            class_distribution=class_dist,
+            depth=2,
+            node_id=5
+        )
+        leaf.impurity = 0.6931  # entropy value
+        
+        # Test with default threshold
+        json_dict = leaf.to_json(threshold=0.5)
+        
+        expected_keys = {'node_id', 'depth', 'is_leaf', 'samples', 'class_distribution', 
+                        'predicted_class', 'impurity', 'type'}
+        self.assertEqual(set(json_dict.keys()), expected_keys)
+        
+        # Check specific values
+        self.assertEqual(json_dict['node_id'], 5)
+        self.assertEqual(json_dict['depth'], 2)
+        self.assertTrue(json_dict['is_leaf'])
+        self.assertEqual(json_dict['samples'], 100)
+        self.assertEqual(json_dict['type'], 'leaf')
+        self.assertEqual(json_dict['predicted_class'], 0)  # 0.4 < 0.5
+        self.assertAlmostEqual(json_dict['impurity'], 0.6931, places=4)
+        
+        # Check class distribution structure
+        class_dist_dict = json_dict['class_distribution']
+        self.assertEqual(class_dist_dict['y0_count'], 60)
+        self.assertEqual(class_dist_dict['y1_count'], 40)
+        self.assertAlmostEqual(class_dist_dict['y1_probability'], 0.4)
+        
+        # Test with different threshold
+        json_dict_03 = leaf.to_json(threshold=0.3)
+        self.assertEqual(json_dict_03['predicted_class'], 1)  # 0.4 >= 0.3
+        
+        # Test JSON serializability
+        json_str = json.dumps(json_dict)
+        self.assertIsInstance(json_str, str)
+        parsed = json.loads(json_str)
+        self.assertEqual(parsed['node_id'], 5)
+    
+    def test_internal_node_to_json(self):
+        """Test internal node JSON serialization."""
+        # Create children
+        left_dist = ClassDistribution(y0_count=30, y1_count=70)
+        left_leaf = TreeNode(
+            is_leaf=True, 
+            class_distribution=left_dist, 
+            depth=2, 
+            node_id=3
+        )
+        
+        right_dist = ClassDistribution(y0_count=70, y1_count=30)
+        right_leaf = TreeNode(
+            is_leaf=True, 
+            class_distribution=right_dist, 
+            depth=2, 
+            node_id=4
+        )
+        
+        # Create internal node
+        root_dist = ClassDistribution(y0_count=100, y1_count=100)
+        root = TreeNode(
+            feature="income=high",
+            is_leaf=False,
+            class_distribution=root_dist,
+            depth=1,
+            node_id=1
+        )
+        root.split_gain = 0.3219
+        root.impurity = 1.0
+        root.set_children(left_leaf, right_leaf)
+        
+        # Get JSON representation
+        json_dict = root.to_json(threshold=0.5)
+        
+        # Check root node structure
+        expected_keys = {'node_id', 'depth', 'is_leaf', 'samples', 'class_distribution',
+                        'predicted_class', 'impurity', 'type', 'feature', 'split_feature_name',
+                        'split_feature_value', 'split_gain', 'left_child', 'right_child'}
+        self.assertEqual(set(json_dict.keys()), expected_keys)
+        
+        # Check root values
+        self.assertEqual(json_dict['type'], 'internal')
+        self.assertEqual(json_dict['feature'], 'income=high')
+        self.assertEqual(json_dict['split_feature_name'], 'income')
+        self.assertEqual(json_dict['split_feature_value'], 'high')
+        self.assertAlmostEqual(json_dict['split_gain'], 0.3219, places=4)
+        
+        # Check children exist
+        self.assertIn('left_child', json_dict)
+        self.assertIn('right_child', json_dict)
+        
+        # Check left child
+        left_child = json_dict['left_child']
+        self.assertEqual(left_child['node_id'], 3)
+        self.assertEqual(left_child['type'], 'leaf')
+        self.assertEqual(left_child['predicted_class'], 1)  # P(y=1) = 0.7 >= 0.5
+        
+        # Check right child
+        right_child = json_dict['right_child']
+        self.assertEqual(right_child['node_id'], 4)
+        self.assertEqual(right_child['type'], 'leaf')
+        self.assertEqual(right_child['predicted_class'], 0)  # P(y=1) = 0.3 < 0.5
+        
+        # Test JSON serializability
+        json_str = json.dumps(json_dict)
+        self.assertIsInstance(json_str, str)
+        parsed = json.loads(json_str)
+        self.assertEqual(parsed['feature'], 'income=high')
+        self.assertEqual(parsed['left_child']['node_id'], 3)
+    
+    def test_json_threshold_propagation(self):
+        """Test that threshold is properly propagated to children in JSON."""
+        # Create tree structure
+        left_dist = ClassDistribution(y0_count=40, y1_count=60)  # P(y=1) = 0.6
+        left_leaf = TreeNode(is_leaf=True, class_distribution=left_dist, node_id=2)
+        
+        right_dist = ClassDistribution(y0_count=80, y1_count=20)  # P(y=1) = 0.2
+        right_leaf = TreeNode(is_leaf=True, class_distribution=right_dist, node_id=3)
+        
+        root = TreeNode(feature="test=A", node_id=1)
+        root.set_children(left_leaf, right_leaf)
+        
+        # Test with threshold 0.5
+        json_05 = root.to_json(threshold=0.5)
+        self.assertEqual(json_05['left_child']['predicted_class'], 1)   # 0.6 >= 0.5
+        self.assertEqual(json_05['right_child']['predicted_class'], 0)  # 0.2 < 0.5
+        
+        # Test with threshold 0.1
+        json_01 = root.to_json(threshold=0.1)
+        self.assertEqual(json_01['left_child']['predicted_class'], 1)   # 0.6 >= 0.1
+        self.assertEqual(json_01['right_child']['predicted_class'], 1)  # 0.2 >= 0.1
+        
+        # Test with threshold 0.8
+        json_08 = root.to_json(threshold=0.8)
+        self.assertEqual(json_08['left_child']['predicted_class'], 0)   # 0.6 < 0.8
+        self.assertEqual(json_08['right_child']['predicted_class'], 0)  # 0.2 < 0.8
     
     def test_internal_node_traversal_with_threshold(self):
         """Test tree traversal with threshold propagation."""
@@ -399,6 +581,92 @@ class TestTreeNodeIntegration(unittest.TestCase):
             pred = root.predict_single(sample, threshold=threshold)
             self.assertEqual(pred, expected, 
                            f"Failed for sample={sample}, threshold={threshold}")
+    
+    def test_complex_tree_json_structure(self):
+        """Test JSON representation of complex tree structure."""
+        # Build the same complex tree as above
+        leaf1 = TreeNode(
+            is_leaf=True,
+            class_distribution=ClassDistribution(y0_count=20, y1_count=80),
+            depth=1,
+            node_id=3
+        )
+        
+        leaf2 = TreeNode(
+            is_leaf=True,
+            class_distribution=ClassDistribution(y0_count=70, y1_count=30),
+            depth=2,
+            node_id=4
+        )
+        
+        leaf3 = TreeNode(
+            is_leaf=True,
+            class_distribution=ClassDistribution(y0_count=40, y1_count=60),
+            depth=2,
+            node_id=5
+        )
+        
+        node1 = TreeNode(
+            feature="age=young", 
+            is_leaf=False, 
+            depth=1,
+            node_id=2,
+            class_distribution=ClassDistribution(y0_count=110, y1_count=90)
+        )
+        node1.set_children(leaf2, leaf3)
+        
+        root = TreeNode(
+            feature="income=high", 
+            is_leaf=False, 
+            depth=0,
+            node_id=1,
+            class_distribution=ClassDistribution(y0_count=130, y1_count=170)
+        )
+        root.set_children(node1, leaf1)
+        
+        # Get JSON representation
+        json_dict = root.to_json(threshold=0.5)
+        
+        # Test overall structure
+        self.assertEqual(json_dict['type'], 'internal')
+        self.assertEqual(json_dict['feature'], 'income=high')
+        self.assertIn('left_child', json_dict)
+        self.assertIn('right_child', json_dict)
+        
+        # Test left child (node1)
+        left_child = json_dict['left_child']
+        self.assertEqual(left_child['type'], 'internal')
+        self.assertEqual(left_child['feature'], 'age=young')
+        self.assertEqual(left_child['node_id'], 2)
+        
+        # Test left child's children
+        self.assertIn('left_child', left_child)  # leaf2
+        self.assertIn('right_child', left_child)  # leaf3
+        
+        leaf2_json = left_child['left_child']
+        self.assertEqual(leaf2_json['type'], 'leaf')
+        self.assertEqual(leaf2_json['node_id'], 4)
+        self.assertEqual(leaf2_json['predicted_class'], 0)  # P(y=1) = 0.3 < 0.5
+        
+        leaf3_json = left_child['right_child']
+        self.assertEqual(leaf3_json['type'], 'leaf')
+        self.assertEqual(leaf3_json['node_id'], 5)
+        self.assertEqual(leaf3_json['predicted_class'], 1)  # P(y=1) = 0.6 >= 0.5
+        
+        # Test right child (leaf1)
+        right_child = json_dict['right_child']
+        self.assertEqual(right_child['type'], 'leaf')
+        self.assertEqual(right_child['node_id'], 3)
+        self.assertEqual(right_child['predicted_class'], 1)  # P(y=1) = 0.8 >= 0.5
+        
+        # Test JSON serializability of complex structure
+        json_str = json.dumps(json_dict, indent=2)
+        self.assertIsInstance(json_str, str)
+        
+        # Test that parsed JSON maintains structure
+        parsed = json.loads(json_str)
+        self.assertEqual(parsed['left_child']['left_child']['node_id'], 4)
+        self.assertEqual(parsed['right_child']['predicted_class'], 1)
     
     def test_default_threshold_behavior(self):
         """Test that default threshold is 0.5."""

@@ -1,6 +1,7 @@
 from typing import Dict, List, Tuple, Optional, Any
 import time
 import numpy as np
+import json
 
 # Import our components
 from sketches import DataSketch, SketchFactory
@@ -541,3 +542,42 @@ class DecisionTreeClassifier:
     
     def __str__(self) -> str:
         return f"DecisionTreeClassifier(criterion={self.criterion}, max_depth={self.max_depth}, min_samples_leaf={self.min_samples_leaf}, threshold={self.prediction_threshold}, trained={self.root is not None})"
+
+    def to_json(self, threshold: Optional[float] = None, indent: Optional[int] = None) -> str:
+        """
+        Convert the decision tree to JSON format.
+        
+        Args:
+            threshold (float, optional): Threshold for predicted classes.
+                                       If None, uses self.prediction_threshold
+            indent (int, optional): JSON indentation for pretty printing.
+                                  If None, returns compact JSON
+            
+        Returns:
+            str: JSON representation of the decision tree
+        """
+        if self.root is None:
+            return json.dumps({"error": "Tree not trained"}, indent=indent)
+        
+        if threshold is None:
+            threshold = self.prediction_threshold
+        
+        tree_json = {
+            "tree_info": {
+                "criterion": self.criterion,
+                "max_depth": self.max_depth,
+                "min_samples_leaf": self.min_samples_leaf,
+                "prediction_threshold": threshold,
+                "sketch_type": self.sketch_type,
+                "training_time": round(self.training_time, 3),
+                "n_features": self.n_features,
+                "n_samples": self.n_samples,
+                "node_count": self.node_count,
+                "leaf_count": self.leaf_count,
+                "max_tree_depth": self.max_tree_depth
+            },
+            "tree_structure": self.root.to_json(threshold)
+        }
+        
+        return json.dumps(tree_json, indent=indent)
+

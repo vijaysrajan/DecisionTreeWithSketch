@@ -1,5 +1,6 @@
 from typing import Optional, Dict, Any, Tuple
 from dataclasses import dataclass
+import json
 
 # Import our DataSketch abstract base class
 from sketches import DataSketch
@@ -56,6 +57,17 @@ class ClassDistribution:
         if self.total_count == 0:
             return 0.0
         return max(self.y0_probability, self.y1_probability)
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary for JSON serialization."""
+        return {
+            'y0_count': self.y0_count,
+            'y1_count': self.y1_count,
+            'total_count': self.total_count,
+            'y0_probability': round(self.y0_probability, 4),
+            'y1_probability': round(self.y1_probability, 4),
+            'confidence': round(self.confidence, 4)
+        }
     
     def __str__(self) -> str:
         return f"ClassDist(y0={self.y0_count}, y1={self.y1_count}, P(y=1)={self.y1_probability:.3f})"
@@ -118,6 +130,53 @@ class TreeNode:
         # Metadata for analysis
         self.split_gain: Optional[float] = None  # Information gain from this split
         self.impurity: Optional[float] = None    # Impurity at this node
+    
+    def to_json(self, threshold: float = 0.5) -> Dict[str, Any]:
+        """
+        Convert node to JSON-serializable dictionary.
+        
+        Args:
+            threshold (float): Threshold for predicted class
+            
+        Returns:
+            Dict[str, Any]: JSON representation of the node
+        """
+        node_dict = {
+            'node_id': self.node_id,
+            'depth': self.depth,
+            'is_leaf': self.is_leaf,
+            'samples': self.get_data_count(),
+        }
+        
+        # Add class distribution info
+        if self.class_distribution:
+            node_dict['class_distribution'] = self.class_distribution.to_dict()
+            node_dict['predicted_class'] = self.class_distribution.predicted_class(threshold)
+        
+        # Add impurity if available
+        if self.impurity is not None:
+            node_dict['impurity'] = round(self.impurity, 4)
+        
+        if self.is_leaf:
+            # Leaf node
+            node_dict['type'] = 'leaf'
+        else:
+            # Internal node
+            node_dict['type'] = 'internal'
+            node_dict['feature'] = self.feature
+            node_dict['split_feature_name'] = self.split_feature_name
+            node_dict['split_feature_value'] = self.split_feature_value
+            
+            if self.split_gain is not None:
+                node_dict['split_gain'] = round(self.split_gain, 4)
+            
+            # Add children
+            if self.left_child:
+                node_dict['left_child'] = self.left_child.to_json(threshold)
+            if self.right_child:
+                node_dict['right_child'] = self.right_child.to_json(threshold)
+        
+        return node_dict
     
     def get_data_count(self) -> int:
         """

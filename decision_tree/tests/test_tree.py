@@ -3,6 +3,7 @@ from typing import Dict, List, Tuple
 import sys
 import os
 import numpy as np
+import json
 
 # Add the parent directory to the path for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -59,6 +60,26 @@ class TestDecisionTreeBasic(unittest.TestCase):
         self.assertEqual(tree3.max_depth, 5)
         self.assertEqual(tree3.prediction_threshold, 0.3)
     
+    def test_json_before_training(self):
+        """Test JSON representation before training."""
+        tree = DecisionTreeClassifier(
+            criterion='entropy',
+            max_depth=10,
+            min_samples_leaf=5,
+            prediction_threshold=0.6
+        )
+        
+        # Get JSON before training
+        json_str = tree.to_json()
+        self.assertIsInstance(json_str, str)
+        
+        # Parse JSON
+        json_dict = json.loads(json_str)
+        
+        # Should contain error message
+        self.assertIn('error', json_dict)
+        self.assertEqual(json_dict['error'], 'Tree not trained')
+    
     def test_perfect_single_feature_separation(self):
         """Test tree building with a single perfect feature."""
         # Perfect feature: separates classes completely
@@ -88,6 +109,122 @@ class TestDecisionTreeBasic(unittest.TestCase):
         
         # Verify information gain
         self.assertAlmostEqual(tree.root.split_gain, 1.0, places=6, msg="Perfect split should have gain = 1.0")
+    
+    def test_json_after_training(self):
+        """Test JSON representation after training."""
+        # Create perfect feature
+        perfect_feature = SketchFactory.create_sketch(
+            self.sketch_type, set(range(0, 50)), universe_size=self.universe_size
+        )
+        features = {"income=high": perfect_feature}
+        
+        # Build tree with custom settings
+        tree = DecisionTreeClassifier(
+            criterion='entropy',
+            max_depth=5,
+            min_samples_leaf=10,
+            prediction_threshold=0.3,
+            sketch_type='bitvector'
+        )
+        tree.fit(features, self.targets_balanced)
+        
+        # Get JSON representation
+        json_str = tree.to_json()
+        self.assertIsInstance(json_str, str)
+        
+        # Parse JSON
+        json_dict = json.loads(json_str)
+        
+        # Verify top-level structure
+        expected_keys = {'tree_info', 'tree_structure'}
+        self.assertEqual(set(json_dict.keys()), expected_keys)
+        
+        # Verify tree_info
+        tree_info = json_dict['tree_info']
+        expected_info_keys = {
+            'criterion', 'max_depth', 'min_samples_leaf', 'prediction_threshold',
+            'sketch_type', 'training_time', 'n_features', 'n_samples',
+            'node_count', 'leaf_count', 'max_tree_depth'
+        }
+        self.assertEqual(set(tree_info.keys()), expected_info_keys)
+        
+        # Check specific values
+        self.assertEqual(tree_info['criterion'], 'entropy')
+        self.assertEqual(tree_info['max_depth'], 5)
+        self.assertEqual(tree_info['min_samples_leaf'], 10)
+        self.assertEqual(tree_info['prediction_threshold'], 0.3)
+        self.assertEqual(tree_info['sketch_type'], 'bitvector')
+        self.assertEqual(tree_info['n_features'], 1)
+        self.assertEqual(tree_info['n_samples'], 100)
+        self.assertGreaterEqual(tree_info['training_time'], 0)
+        
+        # Verify tree_structure exists
+        tree_structure = json_dict['tree_structure']
+        self.assertIsInstance(tree_structure, dict)
+        self.assertIn('node_id', tree_structure)
+        self.assertIn('type', tree_structure)
+    
+    def test_json_with_different_thresholds(self):
+        """Test JSON with different prediction thresholds."""
+        # Create feature that creates imbalanced leaves
+        feature = SketchFactory.create_sketch(
+            self.sketch_type, 
+            set(range(0, 40)) | set(range(50, 60)),  # 40 from class 0, 10 from class 1
+            universe_size=self.universe_size
+        )
+        features = {"feature=A": feature}
+        
+        # Train tree
+        tree = DecisionTreeClassifier(criterion='entropy', prediction_threshold=0.5)
+        tree.fit(features, self.targets_balanced)
+        
+        # Test JSON with different thresholds
+        for threshold in [0.2, 0.5, 0.8]:
+            json_str = tree.to_json(threshold=threshold)
+            json_dict = json.loads(json_str)
+            
+            # Check that threshold is reflected in tree_info
+            self.assertEqual(json_dict['tree_info']['prediction_threshold'], threshold)
+            
+            # Check that predictions change based on threshold
+            # Left child should have P(y=1) = 0.2, right child P(y=1) = 0.8
+            left_child = json_dict['tree_structure']['left_child']
+            right_child = json_dict['tree_structure']['right_child']
+            
+            if threshold <= 0.2:
+                self.assertEqual(left_child['predicted_class'], 1)  # 0.2 >= threshold
+                self.assertEqual(right_child['predicted_class'], 1)  # 0.8 >= threshold
+            elif threshold <= 0.8:
+                self.assertEqual(left_child['predicted_class'], 0)  # 0.2 < threshold
+                self.assertEqual(right_child['predicted_class'], 1)  # 0.8 >= threshold
+            else:  # threshold > 0.8
+                self.assertEqual(left_child['predicted_class'], 0)  # 0.2 < threshold
+                self.assertEqual(right_child['predicted_class'], 0)  # 0.8 < threshold
+    
+    def test_json_pretty_printing(self):
+        """Test JSON pretty printing with indent parameter."""
+        # Create simple tree
+        feature = SketchFactory.create_sketch(
+            self.sketch_type, set(range(0, 50)), universe_size=self.universe_size
+        )
+        features = {"test=A": feature}
+        
+        tree = DecisionTreeClassifier()
+        tree.fit(features, self.targets_balanced)
+        
+        # Test compact JSON (no indent)
+        compact_json = tree.to_json(indent=None)
+        self.assertNotIn('\n', compact_json)  # Should be single line
+        
+        # Test pretty printed JSON (with indent)
+        pretty_json = tree.to_json(indent=2)
+        self.assertIn('\n', pretty_json)  # Should have newlines
+        self.assertIn('  ', pretty_json)   # Should have indentation
+        
+        # Both should parse to same data
+        compact_data = json.loads(compact_json)
+        pretty_data = json.loads(pretty_json)
+        self.assertEqual(compact_data, pretty_data)
     
     def test_prediction_with_threshold(self):
         """Test predictions with different thresholds."""
@@ -463,6 +600,125 @@ class TestDecisionTreeAdvanced(unittest.TestCase):
         )
         self.targets_imbalanced = {"y=0": self.y0_imbalanced, "y=1": self.y1_imbalanced}
     
+    def test_json_complex_tree_structure(self):
+        """Test JSON representation of complex tree structure."""
+        # Create multiple features for complex tree
+        feature1 = SketchFactory.create_sketch(
+            self.sketch_type, set(range(0, 30)) | set(range(60, 70)), universe_size=self.universe_size
+        )
+        feature2 = SketchFactory.create_sketch(
+            self.sketch_type, set(range(10, 50)), universe_size=self.universe_size  
+        )
+        feature3 = SketchFactory.create_sketch(
+            self.sketch_type, set(range(20, 40)) | set(range(80, 90)), universe_size=self.universe_size
+        )
+        
+        features = {
+            "feature1=true": feature1,
+            "feature2=true": feature2,
+            "feature3=true": feature3
+        }
+        
+        # Build complex tree
+        tree = DecisionTreeClassifier(
+            criterion='entropy', 
+            max_depth=3, 
+            min_samples_leaf=5,
+            prediction_threshold=0.4
+        )
+        tree.fit(features, self.targets_imbalanced)
+        
+        # Get JSON
+        json_str = tree.to_json(threshold=0.6, indent=2)
+        json_dict = json.loads(json_str)
+        
+        # Verify metadata
+        tree_info = json_dict['tree_info']
+        self.assertEqual(tree_info['criterion'], 'entropy')
+        self.assertEqual(tree_info['max_depth'], 3)
+        self.assertEqual(tree_info['min_samples_leaf'], 5)
+        self.assertEqual(tree_info['prediction_threshold'], 0.6)  # Should use parameter value
+        self.assertEqual(tree_info['n_features'], 3)
+        self.assertEqual(tree_info['n_samples'], 100)
+        
+        # Verify tree structure exists and is valid
+        tree_structure = json_dict['tree_structure']
+        self.assertIn('node_id', tree_structure)
+        self.assertIn('type', tree_structure)
+        self.assertIn('samples', tree_structure)
+        
+        # If it's internal, should have children
+        if tree_structure['type'] == 'internal':
+            self.assertIn('feature', tree_structure)
+            self.assertIn('split_gain', tree_structure)
+            # May or may not have children based on tree complexity
+        
+        # Verify JSON is properly nested and serializable
+        re_serialized = json.dumps(json_dict)
+        re_parsed = json.loads(re_serialized)
+        self.assertEqual(re_parsed['tree_info']['n_features'], 3)
+    
+    def test_json_with_different_criteria(self):
+        """Test JSON representation with different splitting criteria."""
+        feature = SketchFactory.create_sketch(
+            self.sketch_type, set(range(0, 40)) | set(range(60, 80)), universe_size=self.universe_size
+        )
+        features = {"feature=true": feature}
+        
+        # Test with entropy
+        tree_entropy = DecisionTreeClassifier(criterion='entropy', max_depth=2)
+        tree_entropy.fit(features, self.targets_imbalanced)
+        
+        json_entropy = json.loads(tree_entropy.to_json())
+        self.assertEqual(json_entropy['tree_info']['criterion'], 'entropy')
+        
+        # Test with gini
+        tree_gini = DecisionTreeClassifier(criterion='gini', max_depth=2)
+        tree_gini.fit(features, self.targets_imbalanced)
+        
+        json_gini = json.loads(tree_gini.to_json())
+        self.assertEqual(json_gini['tree_info']['criterion'], 'gini')
+        
+        # Both should have valid tree structures
+        self.assertIn('tree_structure', json_entropy)
+        self.assertIn('tree_structure', json_gini)
+    
+    def test_json_serialization_edge_cases(self):
+        """Test JSON serialization with edge cases."""
+        # Test with leaf-only tree (pure root)
+        y0_pure = SketchFactory.create_sketch(
+            self.sketch_type, set(range(0, 50)), universe_size=self.universe_size
+        )
+        y1_empty = SketchFactory.create_sketch(
+            self.sketch_type, set(), universe_size=self.universe_size
+        )
+        targets_pure = {"y=0": y0_pure, "y=1": y1_empty}
+        
+        feature = SketchFactory.create_sketch(
+            self.sketch_type, set(range(0, 25)), universe_size=self.universe_size
+        )
+        features = {"feature=true": feature}
+        
+        tree = DecisionTreeClassifier()
+        tree.fit(features, targets_pure)
+        
+        # Should create single leaf
+        json_dict = json.loads(tree.to_json())
+        tree_structure = json_dict['tree_structure']
+        
+        self.assertEqual(tree_structure['type'], 'leaf')
+        self.assertEqual(tree_structure['predicted_class'], 0)
+        self.assertNotIn('left_child', tree_structure)
+        self.assertNotIn('right_child', tree_structure)
+        
+        # Test with extreme threshold values
+        json_00 = json.loads(tree.to_json(threshold=0.0))
+        json_10 = json.loads(tree.to_json(threshold=1.0))
+        
+        # Both should be valid JSON
+        self.assertIn('tree_structure', json_00)
+        self.assertIn('tree_structure', json_10)
+    
     def test_threshold_edge_cases(self):
         """Test edge cases for threshold values."""
         # Create feature
@@ -797,6 +1053,68 @@ class TestDecisionTreeIntegration(unittest.TestCase):
             
             print(f"\nLoan Approval Decision Tree (threshold=0.3):")
             tree.print_tree(threshold=0.3)
+    
+    def test_integration_json_loan_scenario(self):
+        """Test JSON representation in realistic loan scenario."""
+        universe_size = 500
+        sketch_type = 'bitvector'
+        
+        # Simplified loan dataset
+        approved = SketchFactory.create_sketch(sketch_type, set(range(0, 300)), universe_size=universe_size)
+        denied = SketchFactory.create_sketch(sketch_type, set(range(300, 500)), universe_size=universe_size)
+        targets = {"y=0": approved, "y=1": denied}
+        
+        # Two predictive features
+        high_income = SketchFactory.create_sketch(sketch_type, set(range(0, 200)) | set(range(300, 350)), universe_size=universe_size)
+        good_credit = SketchFactory.create_sketch(sketch_type, set(range(50, 250)) | set(range(350, 400)), universe_size=universe_size)
+        
+        features = {
+            "income=high": high_income,
+            "credit=good": good_credit
+        }
+        
+        # Train tree
+        tree = DecisionTreeClassifier(
+            criterion='gini',
+            max_depth=3,
+            min_samples_leaf=25,
+            prediction_threshold=0.35
+        )
+        tree.fit(features, targets)
+        
+        # Get JSON with different thresholds
+        json_conservative = json.loads(tree.to_json(threshold=0.8, indent=2))
+        json_lenient = json.loads(tree.to_json(threshold=0.2, indent=2))
+        
+        # Verify both have same structure but different predictions
+        self.assertEqual(json_conservative['tree_info']['criterion'], 'gini')
+        self.assertEqual(json_lenient['tree_info']['criterion'], 'gini')
+        
+        # Thresholds should be different
+        self.assertEqual(json_conservative['tree_info']['prediction_threshold'], 0.8)
+        self.assertEqual(json_lenient['tree_info']['prediction_threshold'], 0.2)
+        
+        # Tree structure should be identical
+        def get_structure_keys(node):
+            """Get structure keys excluding prediction-dependent values"""
+            keys = set(node.keys()) - {'predicted_class', 'prediction_threshold'}
+            if 'left_child' in node:
+                keys.add('has_left_child')
+            if 'right_child' in node:
+                keys.add('has_right_child')
+            return keys
+        
+        conservative_struct = get_structure_keys(json_conservative['tree_structure'])
+        lenient_struct = get_structure_keys(json_lenient['tree_structure'])
+        self.assertEqual(conservative_struct, lenient_struct)
+        
+        # Save JSON to verify it's valid
+        try:
+            json_str = tree.to_json(indent=2)
+            self.assertIsInstance(json_str, str)
+            self.assertGreater(len(json_str), 100)  # Should be substantial
+        except Exception as e:
+            self.fail(f"JSON serialization failed: {e}")
 
 
 if __name__ == '__main__':
